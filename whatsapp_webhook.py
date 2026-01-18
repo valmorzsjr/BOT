@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import os
 import json
 import time 
@@ -19,7 +18,6 @@ except ImportError:
     print("AVISO: A biblioteca 'firebase-admin' não está instalada. O histórico de pedidos será desativado.")
 
 
-# --- CONFIGURAÇÕES DE AMBIENTE E API ---
 
 
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
@@ -31,7 +29,6 @@ if not GEMINI_API_KEY:
         print("ERRO: A variável de ambiente 'GEMINI_API_KEY' não foi definida. Crie o arquivo 'gemini_api_key.txt' ou defina a variável.")
         pass
 
-# Inicialização do Firebase/Firestore
 db = None
 if HAS_FIREBASE:
     try:
@@ -57,7 +54,6 @@ if HAS_FIREBASE:
         print(f"AVISO: Não foi possível inicializar o Firebase. O banco de dados não funcionará. Erro: {e}")
         db = None
 
-# Cliente Gemini
 client = None
 if GEMINI_API_KEY:
     try:
@@ -69,18 +65,14 @@ if GEMINI_API_KEY:
 else:
     print("ERRO: Cliente Gemini não inicializado devido à falta da chave de API.")
 
-# ---------------------------------------------------------------------------
-# >> LINK DO CARDÁPIO EM PDF
-# ---------------------------------------------------------------------------
+
 PDF_CARDAPIO_LINK = "https://abre.ai/n7ty"
 
-# >> ENDEREÇO DO RESTAURANTE (V14.0)
 RESTAURANT_ADDRESS = "Av. Assis Brasil 516, Porto Alegre, Rio Grande do Sul 91030-280"
 
 GEMINI_TIMEOUT_SECONDS = 240 
 
 
-# ARQUIVO DE CARDÁPIO ATUALIZADO
 CARDAPIO_JSON = {
     "Adicional": [
         {"nome": "Turbine seu Burguer (Adicional)", "preco": 15.00, "descricao": "Adiciona fritas e Bebida ao seu pedido."},
@@ -152,7 +144,6 @@ CARDAPIO_JSON = {
 
 app = Flask(__name__)
 
-# --- FUNÇÕES DE LÓGICA DO CHAT E API GEMINI ---
 
 def format_menu_for_gemini():
     """Formata o cardápio JSON em uma string SIMPLES para o prompt do Gemini."""
@@ -164,13 +155,13 @@ def format_menu_for_gemini():
             menu_str += f"- {item['nome']}: R${item['preco']:.2f}{serve}\n"
     return menu_str
 
-# Função auxiliar para limpar a string antes de enviar ao Twilio
+
 def clean_and_format_message(text):
-    # 1. Remove o prefixo "🤖 Saluz Bot:"
+   
     text = re.sub(r"🤖\s*Saluz Bot:[\s\n]*", "", text, flags=re.IGNORECASE)
-    # 2. Substitui múltiplas quebras de linha por duas (para espaçamento decente no WhatsApp)
+  
     text = re.sub(r'[\n]{3,}', '\n\n', text)
-    # 3. Remove quebras de linha no início e no fim
+   
     return text.strip()
 
 
@@ -183,12 +174,10 @@ def get_gemini_response(user_message, user_history, user_doc_ref):
 
     MAX_RETRIES = 4
     response_text = None
-    
-    # DEFINIÇÕES DE MENSAGENS FIXAS
+
     initial_greeting = "Olá! Eu sou o Saluz Bot, seu assistente de pedidos. Como posso te ajudar a montar seu pedido hoje? Se precisar do cardápio, me peça 'cardápio'!"
-    restaurant_address = RESTAURANT_ADDRESS # Usa a constante definida
-    
-    # Montagem do System Prompt (Instrução da Persona e Regras)
+    restaurant_address = RESTAURANT_ADDRESS 
+
     menu_context = format_menu_for_gemini()
     system_prompt = f"""
     [INSTRUÇÕES GERAIS]
@@ -207,22 +196,18 @@ def get_gemini_response(user_message, user_history, user_doc_ref):
     6. CONVERSA GERAL (Action 'GENERAL_CHAT'): Se o usuário perguntar sobre horários, localização, ou *pedir o cardápio*, a 'action' DEVE ser 'GENERAL_CHAT'. Se o cliente pedir o cardápio, **você DEVE incluir este link para o cardápio em PDF: {PDF_CARDAPIO_LINK}**
     [/INSTRUÇÕES GERAIS]
     """
-    
-    # 1. Inicia o array de conversação
+
     conversation = []
 
-    # 2. Adicionar o histórico de conversas do usuário
     if user_history.get('chat_history'):
         for msg in user_history['chat_history']:
             text_part = msg.get('text', '')
             if text_part:
                 conversation.append(types.Content(role=msg['role'], parts=[types.Part(text=text_part)])) 
 
-    # 3. Adicionar a mensagem atual do usuário com o System Prompt prefixado
-    
-    # Lógica de prompt para a primeira mensagem
+
     if not conversation:
-        # O system_prompt é anexado à mensagem do usuário para contextulizar o modelo
+
         full_user_message = (
             f"{system_prompt}\n\n[MENSAGEM DO CLIENTE]: {user_message}\n\n"
             f"[INSTRUÇÃO ADICIONAL]: Se a mensagem do cliente for 'Oi', use a saudação inicial: '{initial_greeting}'"
@@ -260,7 +245,7 @@ def get_gemini_response(user_message, user_history, user_doc_ref):
             
             response_text = response.text.strip()
             
-            break # Sucesso, saia do loop
+            break 
             
         except APIError as e: 
             print(f"Tentativa {attempt + 1}/{MAX_RETRIES} falhou com erro de API: {e}")
@@ -270,35 +255,34 @@ def get_gemini_response(user_message, user_history, user_doc_ref):
                 time.sleep(wait_time)
             else:
                 print("Todas as tentativas falharam. Retornando mensagem de erro final.")
-                # Fallback para o caso de erro de API
+              
                 return "❌ Desculpe, o sistema de pedidos está temporariamente sobrecarregado. Por favor, tente novamente em um minuto."
         
         except Exception as e:
             print(f"Erro inesperado na chamada Gemini: {e}")
-            # Fallback para o caso de erro inesperado
+          
             return f"❌ Desculpe, ocorreu um erro inesperado ao processar seu pedido. Detalhe: {e}"
 
 
     if response_text is None:
         return "❌ Desculpe, o serviço de IA falhou após várias tentativas."
     
-    # --- Lógica de processamento e persistência da resposta ---
+
     
     try:
         data = json.loads(response_text)
         
-        # --- Lógica para o Usuário ---
+    
         
-        raw_final_message = "" # Inicializa a mensagem bruta
+        raw_final_message = "" 
         
-        # Intercepta APENAS 'Oi'/'Olá' no primeiro turno (sem histórico) para garantir a saudação
         is_first_turn_greeting = user_message.strip().lower() in ['oi', 'olá', 'ola'] and not user_history.get('chat_history')
         
         if data.get('action') == 'GENERAL_CHAT' and is_first_turn_greeting:
-             # Se for o primeiro "Oi", usa a saudação inicial codificada
+
              raw_final_message = f"🤖 Saluz Bot:\n\n{initial_greeting}"
         else:
-             # Caso contrário, usa a summary
+  
              raw_final_message = f"🤖 Saluz Bot:\n\n{data.get('summary', 'Desculpe, não entendi. Pode repetir?')}\n" # Adiciona um fallback simples para a summary
         
         
@@ -312,7 +296,7 @@ def get_gemini_response(user_message, user_history, user_doc_ref):
             items_list = "\n".join([f"- {item['quantity']}x {item['name']}" for item in data['items']])
             raw_final_message += f"\nSeu Pedido Final:\n{items_list}\n"
             raw_final_message += f"\n✅ O VALOR TOTAL É DE R${data.get('total_price', 0.00):.2f}."
-            # Garante que a pergunta de endereço seja feita no final se a summary não a fez
+
             if "endereço" not in raw_final_message.lower() and "qual" not in raw_final_message.lower():
                  raw_final_message += "\n\nObrigado por pedir no Saluz Food House! Qual será o endereço de entrega?"
 
@@ -320,10 +304,10 @@ def get_gemini_response(user_message, user_history, user_doc_ref):
         elif data.get('action') == 'GENERAL_CHAT':
             pass
             
-        # Limpa e formata a mensagem antes de retornar
+
         final_message = clean_and_format_message(raw_final_message)
         
-        # Atualiza o histórico no Firestore (se estiver disponível)
+
         if db and user_doc_ref:
             
             
@@ -333,10 +317,10 @@ def get_gemini_response(user_message, user_history, user_doc_ref):
                     if item.get('role') in ['user', 'model']:
                         new_chat_history.append({'role': item['role'], 'text': item['text']})
 
-            # Adiciona a mensagem do usuário (sem o system prompt)
+         
             new_chat_history.append({'role': 'user', 'text': user_message})
             
-            # Adiciona a resposta final do modelo ao histórico
+     
             new_chat_history.append({'role': 'model', 'text': final_message})
 
             user_doc_ref.set({'items': data.get('items', []), 
@@ -354,22 +338,18 @@ def get_gemini_response(user_message, user_history, user_doc_ref):
         print(f"ERRO: Erro de lógica no pós-processamento: {e}")
         return f"🤖 Saluz Bot: Ops! Tive um erro de lógica interna. Por favor, tente novamente."
 
-# --- ROTA WEBHOOK DO FLASK (COM LOG DE DEBUG) ---
 
 @app.route('/whatsapp', methods=['POST'])
 def whatsapp_webhook():
     """Recebe mensagens do Twilio e as processa com a Gemini API."""
     
-    # 1. Extrair dados da mensagem do Twilio
     incoming_msg = request.values.get('Body', '').strip()
     sender_id = request.values.get('From', '').strip() 
 
-    # 2. Inicializar a resposta do Twilio
     resp = MessagingResponse()
     
     print(f"Mensagem recebida de {sender_id}: {incoming_msg}")
 
-    # 3. Lógica do Banco de Dados (Firestore) - Recuperação de Histórico
     user_history = {}
     user_doc_ref = None
     if db:
@@ -380,30 +360,24 @@ def whatsapp_webhook():
                 user_history = user_doc.to_dict()
         except Exception as e:
             print(f"Erro ao buscar histórico no Firestore: {e}")
-    
-    # 4. Obter resposta do Gemini
+
     ai_response_text = get_gemini_response(incoming_msg, user_history, user_doc_ref)
     
-    # Log da Resposta gerada antes de enviar para o Twilio**
-    print(f"Resposta gerada pela IA (limpa): {ai_response_text[:100]}...") # Imprime os primeiros 100 caracteres
+    print(f"Resposta gerada pela IA (limpa): {ai_response_text[:100]}...") 
     
-    # 5. Enviar a Resposta de Volta via Twilio
     resp.message(ai_response_text)
     
-    # 6. Retornar o XML de resposta para o Twilio
     twilio_xml_response = str(resp)
     
-    # Log do XML final**
     print(f"XML final retornado ao Twilio: {twilio_xml_response}")
     
-    return twilio_xml_response # Retorna o XML completo
+    return twilio_xml_response
 
 @app.route('/')
 def health_check():
     """Ponto de checagem simples para verificar se o servidor está ativo."""
     return "✅ O Webhook WhatsApp Saluz Bot (via Twilio) está funcionando! Acesse /whatsapp para enviar um POST do Twilio."
 
-# --- EXECUÇÃO DO SERVIDOR ---
 
 if __name__ == '__main__':
     print("Iniciando o Servidor Flask...")
